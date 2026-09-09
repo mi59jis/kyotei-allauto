@@ -1,0 +1,11 @@
+chrome_profile_note/
+note_cookies.json
+note_cookies.json.bak
+__pycache__/
+*.pyc
+note_draft_fail_debug.html
+explore_publish_page*.html
+explore_note_page.html
+cycle_scheduler.log
+record_scheduler.log
+auto_cycle_log.txt
