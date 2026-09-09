@@ -1,0 +1,59 @@
+name: predict-cycle
+
+on:
+  schedule:
+    # cronはUTC。JST 8:00〜21:00をカバーするため2本に分けている
+    # (23:00-23:59 UTC = 8:00-8:59 JST) と (0:00-11:59 UTC = 9:00-20:59 JST)
+    - cron: "*/10 23 * * *"
+    - cron: "*/10 0-11 * * *"
+  workflow_dispatch: {}   # 手動実行用(スマホアプリの「Run workflow」からも実行可能)
+
+permissions:
+  contents: write   # 予想結果ファイルをリポジトリにコミットし直すため
+
+concurrency:
+  group: predict-cycle
+  cancel-in-progress: false   # 前回の実行が終わっていなければ待つ(同時実行によるファイル競合を防ぐ)
+
+jobs:
+  run-cycle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Restore note.com cookies
+        env:
+          NOTE_COOKIES_JSON: ${{ secrets.NOTE_COOKIES_JSON }}
+        run: printf '%s' "$NOTE_COOKIES_JSON" > note_cookies.json
+
+      - name: Run prediction cycle
+        run: python auto_predict_cycle.py
+
+      - name: Upload log as artifact (for debugging, auto-deleted after 14 days)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: auto_cycle_log-${{ github.run_id }}
+          path: auto_cycle_log.txt
+          retention-days: 14
+          if-no-files-found: ignore
+
+      - name: Commit updated results
+        run: |
+          git config user.name "kyotei-auto-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add prediction_record.csv race_progress.json || true
+          git diff --cached --quiet || git commit -m "auto: predict cycle $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          git pull --rebase
+          git push

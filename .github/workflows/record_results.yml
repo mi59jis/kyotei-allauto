@@ -1,0 +1,46 @@
+name: record-results
+
+on:
+  schedule:
+    - cron: "0 18 * * *"   # 18:00 UTC = 3:00 JST(その日のレースが全て終わった後)
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  record:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Record yesterday's results
+        run: python pipeline.py record
+
+      - name: Commit updated results
+        run: |
+          git config user.name "kyotei-auto-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add prediction_record.csv || true
+          git diff --cached --quiet || git commit -m "auto: record results $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          git pull --rebase
+          git push
+
+      - name: Restore note.com cookies
+        env:
+          NOTE_COOKIES_JSON: ${{ secrets.NOTE_COOKIES_JSON }}
+        run: printf '%s' "$NOTE_COOKIES_JSON" > note_cookies.json
+
+      - name: Post daily results article to note
+        run: python post_daily_results.py
