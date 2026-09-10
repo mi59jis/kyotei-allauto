@@ -128,6 +128,10 @@ DEFAULT_TIME_WINDOW = (8, 21)  # STADIUM_TIME_WINDOWSに無い場のデフォル
 
 # note記事化する基準(1レース1記事方式)。このedge以上のレースだけ、その場で新規下書きを作る。
 NOTE_EDGE_THRESHOLD = 0.03
+# 【2026-09-11追加】Trueにすると、note下書き作成後に実際の「投稿する」まで自動で行う
+# (=有料記事として即座に公開・販売される)。何か問題が起きたときは、まずここをFalseに
+# 戻せば、以前と同じ「下書きまでは自動、公開は手動」の安全な状態に即座に戻せる。
+AUTO_PUBLISH_NOTE = True
 
 LOG_FILE = "auto_cycle_log.txt"
 
@@ -537,9 +541,10 @@ def main():
                         note_driver = note_auto_draft.make_driver(headless=True)
                     url = note_auto_draft.create_new_draft(
                         item["title"], item["body"], driver=note_driver, log=log,
-                        paywall_anchor_text=item.get("paywall_anchor_text"))
+                        paywall_anchor_text=item.get("paywall_anchor_text"),
+                        auto_publish=AUTO_PUBLISH_NOTE)
                     if url:
-                        log(f"  📤 note下書きを新規作成しました({stadium_name}{rno}R, edge={item['max_edge']:+.3f}): {url}")
+                        log(f"  📤 note処理が完了しました({stadium_name}{rno}R, edge={item['max_edge']:+.3f}): {url}")
                     else:
                         log(f"  ⚠ note下書き作成に失敗しました({stadium_name}{rno}R)")
                 except Exception as e:

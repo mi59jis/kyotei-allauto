@@ -39,8 +39,9 @@ def main():
     driver = note_auto_draft.make_driver(headless=True)
     try:
         # paywall_anchor_textを渡さない = 無料記事として投稿する
-        url = note_auto_draft.create_new_draft(title, body, driver=driver)
-        print(f"✅ 下書きを作成しました: {url}")
+        # auto_publish=True: 下書きで止めず、実際に公開する
+        url = note_auto_draft.create_new_draft(title, body, driver=driver, auto_publish=True)
+        print(f"✅ 完了: {url}")
     finally:
         driver.quit()
 

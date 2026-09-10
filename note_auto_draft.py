@@ -401,13 +401,18 @@ def _insert_paywall_line_after(driver, anchor_text, log=None):
         return False
 
 
-def _prepare_paid_settings(driver, price=300, log=None):
+def _prepare_paid_settings(driver, price=300, log=None, publish=False):
     """
-    【2026-09-04追加】「公開に進む」→「有料」に切り替え→価格入力、まで自動で行う。
-    実際の「投稿する」(公開)ボタンは絶対にクリックしない
-    (最終確認は人間が目視でnote.com上から行う想定)。
+    「公開に進む」→「有料」に切り替え→価格入力、まで自動で行う。
 
-    戻り値: 成功したらTrue。
+    publish: 【2026-09-11追加】Trueを渡した場合のみ、最後に「投稿する」ボタンも
+      クリックして実際に公開する。Falseなら(デフォルト)従来通り、価格設定までで
+      止まり、「投稿する」は絶対にクリックしない。
+
+    戻り値: (settings_ok, published)
+      settings_ok: 価格設定までが成功したか
+      published: 実際に「投稿する」をクリックし、公開が確認できたか
+                 (publish=Falseなら常にFalse)
     """
     def _log(msg):
         print(msg)
@@ -425,7 +430,7 @@ def _prepare_paid_settings(driver, price=300, log=None):
                 break
         if publish_btn is None:
             _log("  ⚠ 「公開に進む」ボタンが見つかりませんでした。価格設定をスキップします。")
-            return False
+            return False, False
         publish_btn.click()
         time.sleep(2)
 
@@ -436,7 +441,7 @@ def _prepare_paid_settings(driver, price=300, log=None):
                 break
         if paid_radio is None:
             _log("  ⚠ 「有料」のラジオボタンが見つかりませんでした。価格設定をスキップします。")
-            return False
+            return False, False
         driver.execute_script("arguments[0].click();", paid_radio)
         time.sleep(1)
 
@@ -448,22 +453,103 @@ def _prepare_paid_settings(driver, price=300, log=None):
                 break
         if price_input is None:
             _log("  ⚠ 価格入力欄が見つかりませんでした。")
-            return False
+            return False, False
         price_input.click()
         # 既存の値を全選択して上書き(単純なclear()はReact管理の入力欄で
         # 効かないことがあるため、Ctrl+Aで全選択してから入力する)
         price_input.send_keys(Keys.CONTROL, "a")
         price_input.send_keys(str(price))
         time.sleep(0.5)
-        _log(f"  💰 有料({price}円)に設定しました。※「投稿する」はまだ押していません。")
-        return True
+
+        if not publish:
+            _log(f"  💰 有料({price}円)に設定しました。※「投稿する」はまだ押していません。")
+            return True, False
+
+        # ここから先はpublish=Trueのときだけ実行される、実際の公開操作
+        submit_btn = None
+        for el in driver.find_elements(By.TAG_NAME, "button"):
+            if el.text.strip() == "投稿する":
+                submit_btn = el
+                break
+        if submit_btn is None:
+            _log("  ⚠ 「投稿する」ボタンが見つかりませんでした。公開は行わず下書きのままにします。")
+            return True, False
+
+        url_before = driver.current_url
+        submit_btn.click()
+        time.sleep(3)
+
+        # 公開が成功すると、/publish/ から別のURL(記事の閲覧URL等)に遷移する想定。
+        # URLが変わっていなければ、確認ダイアログ等で止まっている可能性があるため
+        # 「公開できたとは断定しない」(念のため安全側に倒す)。
+        url_after = driver.current_url
+        if url_after != url_before and "/publish/" not in url_after:
+            _log(f"  🚀 記事を公開しました: {url_after}")
+            return True, True
+        else:
+            _log(f"  ⚠ 「投稿する」をクリックしましたが、公開できたか確認できませんでした"
+                 f"(URL変化なし: {url_after})。下書きのまま残っている可能性があります。要目視確認。")
+            return True, False
     except Exception as e:
-        _log(f"  ⚠ 価格設定処理でエラー: {type(e).__name__}: {e}")
+        _log(f"  ⚠ 価格設定・公開処理でエラー: {type(e).__name__}: {e}")
+        return False, False
+
+
+def _publish_free_article(driver, log=None):
+    """
+    【2026-09-11追加】無料記事(有料エリアなし)を「公開に進む」→「投稿する」まで
+    自動で公開する。price設定は行わない(デフォルトの「無料」のまま)。
+
+    戻り値: 公開できたと確認できればTrue。
+    """
+    def _log(msg):
+        print(msg)
+        if log:
+            try:
+                log(msg)
+            except Exception:
+                pass
+
+    try:
+        publish_btn = None
+        for el in driver.find_elements(By.TAG_NAME, "button"):
+            if el.text.strip() == "公開に進む":
+                publish_btn = el
+                break
+        if publish_btn is None:
+            _log("  ⚠ 「公開に進む」ボタンが見つかりませんでした。公開をスキップします。")
+            return False
+        publish_btn.click()
+        time.sleep(2)
+
+        submit_btn = None
+        for el in driver.find_elements(By.TAG_NAME, "button"):
+            if el.text.strip() == "投稿する":
+                submit_btn = el
+                break
+        if submit_btn is None:
+            _log("  ⚠ 「投稿する」ボタンが見つかりませんでした。公開は行わず下書きのままにします。")
+            return False
+
+        url_before = driver.current_url
+        submit_btn.click()
+        time.sleep(3)
+
+        url_after = driver.current_url
+        if url_after != url_before and "/publish/" not in url_after:
+            _log(f"  🚀 記事を公開しました: {url_after}")
+            return True
+        else:
+            _log(f"  ⚠ 「投稿する」をクリックしましたが、公開できたか確認できませんでした"
+                 f"(URL変化なし: {url_after})。下書きのまま残っている可能性があります。要目視確認。")
+            return False
+    except Exception as e:
+        _log(f"  ⚠ 公開処理でエラー: {type(e).__name__}: {e}")
         return False
 
 
 def create_new_draft(title, body, headless=True, driver=None, log=None,
-                      paywall_anchor_text=None, price=300):
+                      paywall_anchor_text=None, price=300, auto_publish=False):
     """
     タイトル・本文を直接受け取り、常に新規の下書きを1件作成する。
     (1レース1記事运用向け。対話プロンプトは出さない)
@@ -472,13 +558,17 @@ def create_new_draft(title, body, headless=True, driver=None, log=None,
             Noneなら内部で新規作成し、この関数の中でquitまで行う。
     log: 呼び出し元のログ関数(例: auto_predict_cycle.pyのlog())。渡された場合、
          進捗メッセージはprint()だけでなくそちらにも記録される。渡さなければprint()のみ。
-    paywall_anchor_text: 【2026-09-04追加・実験的】渡された場合、本文中でこのテキストを
-         含む段落の直後に有料ラインを移動させ、続けて「公開に進む」→「有料」に切り替え→
-         price円を入力するところまで自動で行う(投稿ボタンは押さない)。
-         Noneの場合は下書き保存のみ行う(従来通り)。
+    paywall_anchor_text: 渡された場合、本文中でこのテキストを含む段落の直後に有料エリアを
+         挿入し、続けて「公開に進む」→「有料」に切り替え→price円を入力するところまで
+         自動で行う。Noneの場合は下書き保存のみ行う(従来通り)。
     price: paywall_anchor_textを渡した場合の価格(円)。デフォルト300円。
+    auto_publish: 【2026-09-11追加】Trueの場合、下書き保存の後に実際の「投稿する」まで
+         クリックして公開する。paywall_anchor_textがある場合は価格設定後に、無い場合
+         (無料記事)はそのまま公開する。デフォルトFalse(=下書きのまま、安全側)。
+         実際に公開される操作を伴うため、有効にする前にheadless=Falseで一度
+         目視確認してから使うことを強く推奨する。
 
-    戻り値: 成功した場合は下書きのURL。
+    戻り値: 成功した場合は下書き(または公開後)の記事URL。
     【2026-09-02 修正】失敗時は None を返して黙って諦めるのではなく、原因を
     含めた RuntimeError を送出するようにした。呼び出し元(auto_predict_cycle.py)
     は既に例外を except して traceback ごとログに残しているため、この変更だけで
@@ -545,20 +635,36 @@ def create_new_draft(title, body, headless=True, driver=None, log=None,
             raise RuntimeError(_dump_failure_debug(
                 driver, "「下書き保存」ボタンが見つかりませんでした"))
 
-        # 【2026-09-04追加】価格設定。paywall_anchor_textが渡された時だけ行う
+        # 価格設定(・任意で公開)。paywall_anchor_textが渡された時だけ価格設定フローに入る
         # (=有料記事として運用する想定のときだけ)。失敗しても下書き自体は
         # 既に保存済みなので、URLは返す(価格は後で手動設定すればよい)。
+        published = False
         if paywall_anchor_text:
-            _prepare_paid_settings(driver, price=price, log=log)
-            # 価格設定の過程で「公開に進む」を押して画面遷移しているため、
-            # 下書きURLに戻ってから終了する(呼び出し元に返すURLを一貫させるため)
-            try:
-                driver.get(f"https://editor.note.com/notes/{_extract_note_id(driver.current_url)}/edit/")
-                time.sleep(1)
-            except Exception:
-                pass
+            settings_ok, published = _prepare_paid_settings(
+                driver, price=price, log=log, publish=auto_publish)
+            if not published:
+                # 公開しなかった(=下書きのまま)場合のみ、価格設定の過程で
+                # 「公開に進む」を押して画面遷移した分を戻しておく
+                # (呼び出し元に返すURLを一貫させるため)。
+                try:
+                    driver.get(f"https://editor.note.com/notes/{_extract_note_id(driver.current_url)}/edit/")
+                    time.sleep(1)
+                except Exception:
+                    pass
+        elif auto_publish:
+            # paywall_anchor_textが無い(=無料記事)場合の公開パス
+            published = _publish_free_article(driver, log=log)
+            if not published:
+                try:
+                    driver.get(f"https://editor.note.com/notes/{_extract_note_id(driver.current_url)}/edit/")
+                    time.sleep(1)
+                except Exception:
+                    pass
 
-        _log(f"✅ 新規下書きを作成しました: {driver.current_url}")
+        if published:
+            _log(f"🚀 記事を公開しました: {driver.current_url}")
+        else:
+            _log(f"✅ 新規下書きを作成しました: {driver.current_url}")
         return driver.current_url
     finally:
         if owns_driver:
