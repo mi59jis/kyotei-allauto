@@ -401,6 +401,73 @@ def _insert_paywall_line_after(driver, anchor_text, log=None):
         return False
 
 
+def _click_publish_and_verify(driver, log=None):
+    """
+    「投稿する」ボタンをクリックし、公開できたかを確認する共通処理。
+    【2026-09-11強化】
+    - クリック後に確認ダイアログ(モーダル)が出るケースに備え、「投稿する」以外に
+      「公開する」「確認」「OK」「はい」といった確認ボタンが新たに現れていないか
+      追加で探し、あれば押す。
+    - 判定までの待ち時間を伸ばし、間隔を空けて複数回URLをチェックする。
+    - 公開できたか確認できなかった場合、ページソースをデバッグ用に保存する。
+
+    戻り値: 公開できたと確認できればTrue。
+    """
+    def _log(msg):
+        print(msg)
+        if log:
+            try:
+                log(msg)
+            except Exception:
+                pass
+
+    submit_btn = None
+    for el in driver.find_elements(By.TAG_NAME, "button"):
+        if el.text.strip() == "投稿する":
+            submit_btn = el
+            break
+    if submit_btn is None:
+        _log("  ⚠ 「投稿する」ボタンが見つかりませんでした。公開は行わず下書きのままにします。")
+        return False
+
+    url_before = driver.current_url
+    submit_btn.click()
+    time.sleep(2)
+
+    # クリック後に確認ダイアログが出ていないか探し、あれば押す
+    try:
+        confirm_texts = ("公開する", "確認", "OK", "はい")
+        for el in driver.find_elements(By.TAG_NAME, "button"):
+            t = el.text.strip()
+            if t in confirm_texts:
+                el.click()
+                _log(f"  ➡ 確認ダイアログ(「{t}」)が出たため押しました。")
+                time.sleep(2)
+                break
+    except Exception:
+        pass
+
+    # 判定までしばらく待ち、複数回チェックする(反映に時間がかかる場合があるため)
+    for _ in range(3):
+        time.sleep(2)
+        url_after = driver.current_url
+        if url_after != url_before and "/publish/" not in url_after:
+            _log(f"  🚀 記事を公開しました: {url_after}")
+            return True
+
+    url_after = driver.current_url
+    debug_path = os.path.abspath("note_publish_fail_debug.html")
+    try:
+        with open(debug_path, "w", encoding="utf-8") as f:
+            f.write(driver.page_source)
+    except Exception:
+        debug_path = "(保存も失敗)"
+    _log(f"  ⚠ 「投稿する」をクリックしましたが、公開できたか確認できませんでした"
+         f"(URL変化なし: {url_after})。下書きのまま残っている可能性があります。"
+         f"ページソース保存先: {debug_path}")
+    return False
+
+
 def _prepare_paid_settings(driver, price=300, log=None, publish=False):
     """
     「公開に進む」→「有料」に切り替え→価格入力、まで自動で行う。
@@ -466,30 +533,8 @@ def _prepare_paid_settings(driver, price=300, log=None, publish=False):
             return True, False
 
         # ここから先はpublish=Trueのときだけ実行される、実際の公開操作
-        submit_btn = None
-        for el in driver.find_elements(By.TAG_NAME, "button"):
-            if el.text.strip() == "投稿する":
-                submit_btn = el
-                break
-        if submit_btn is None:
-            _log("  ⚠ 「投稿する」ボタンが見つかりませんでした。公開は行わず下書きのままにします。")
-            return True, False
-
-        url_before = driver.current_url
-        submit_btn.click()
-        time.sleep(3)
-
-        # 公開が成功すると、/publish/ から別のURL(記事の閲覧URL等)に遷移する想定。
-        # URLが変わっていなければ、確認ダイアログ等で止まっている可能性があるため
-        # 「公開できたとは断定しない」(念のため安全側に倒す)。
-        url_after = driver.current_url
-        if url_after != url_before and "/publish/" not in url_after:
-            _log(f"  🚀 記事を公開しました: {url_after}")
-            return True, True
-        else:
-            _log(f"  ⚠ 「投稿する」をクリックしましたが、公開できたか確認できませんでした"
-                 f"(URL変化なし: {url_after})。下書きのまま残っている可能性があります。要目視確認。")
-            return True, False
+        published = _click_publish_and_verify(driver, log=log)
+        return True, published
     except Exception as e:
         _log(f"  ⚠ 価格設定・公開処理でエラー: {type(e).__name__}: {e}")
         return False, False
@@ -522,27 +567,7 @@ def _publish_free_article(driver, log=None):
         publish_btn.click()
         time.sleep(2)
 
-        submit_btn = None
-        for el in driver.find_elements(By.TAG_NAME, "button"):
-            if el.text.strip() == "投稿する":
-                submit_btn = el
-                break
-        if submit_btn is None:
-            _log("  ⚠ 「投稿する」ボタンが見つかりませんでした。公開は行わず下書きのままにします。")
-            return False
-
-        url_before = driver.current_url
-        submit_btn.click()
-        time.sleep(3)
-
-        url_after = driver.current_url
-        if url_after != url_before and "/publish/" not in url_after:
-            _log(f"  🚀 記事を公開しました: {url_after}")
-            return True
-        else:
-            _log(f"  ⚠ 「投稿する」をクリックしましたが、公開できたか確認できませんでした"
-                 f"(URL変化なし: {url_after})。下書きのまま残っている可能性があります。要目視確認。")
-            return False
+        return _click_publish_and_verify(driver, log=log)
     except Exception as e:
         _log(f"  ⚠ 公開処理でエラー: {type(e).__name__}: {e}")
         return False
