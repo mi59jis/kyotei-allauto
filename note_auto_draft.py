@@ -111,15 +111,14 @@ def _load_cookies(driver, cookies_path):
     """
     Cookieファイルを読み込み、ブラウザに適用してログイン状態にする。
 
-    【2026-09-11修正】以前は https://note.com/ だけを開いてから全Cookieを設定していたが、
-    Seleniumは「今開いているページのドメインと一致しないCookie」を設定できない仕様のため、
-    .editor.note.com など note.com とは別のサブドメインを持つCookieが軒並み適用に
-    失敗していた(実際に fp, _vid_v2 の2件が失敗し、Cookie 4/6件しか適用されていなかった)。
-    エディタ画面(editor.note.com)側のセッション確立に必要なCookieが欠けていたため、
-    ログイン済みのはずが editor.note.com 側では未ログイン扱いになっていた。
+    【2026-09-11再修正】ドメインごとにページを開いてから add_cookie() する方式を
+    試みたが、editor.note.com には「/」だけで開ける独立したページが無い
+    (すぐnote.comにリダイレクトされる等)ため、結局そのドメイン分のCookie
+    (fp, _vid_v2)が適用できず、Cookie 4/6件のまま変化しなかった。
 
-    ここでは、Cookieが指定しているドメインごとにグルーピングし、各ドメインのページを
-    一度開いてから、そのドメイン分のCookieだけを設定する方式に直した。
+    そこで、ページ遷移に依存しない Chrome DevTools Protocol(CDP)の
+    Network.setCookie を使う方式に切り替えた。これはブラウザが今どのページを
+    開いているかに関係なく、任意のドメインのCookieを直接設定できる。
     """
     import json
     try:
@@ -129,33 +128,35 @@ def _load_cookies(driver, cookies_path):
         print(f"⚠ Cookieファイルの読み込みに失敗しました: {e}")
         return False
 
-    # ドメインごとにグルーピングする(先頭の"."は無視して同じサイトとして扱う)
-    by_domain = {}
-    for c in cookies:
-        domain = (c.get("domain") or "").lstrip(".")
-        by_domain.setdefault(domain, []).append(c)
+    # CDPコマンドを使うにも何かページが開いている必要があるため、まず開いておく
+    driver.get("https://note.com/")
+    time.sleep(1)
 
     applied = 0
     total = len(cookies)
-    for domain, domain_cookies in by_domain.items():
+    for c in cookies:
+        cdp_cookie = {
+            "name": c.get("name"),
+            "value": c.get("value"),
+            "domain": c.get("domain"),
+            "path": c.get("path", "/"),
+            "secure": bool(c.get("secure", False)),
+            "httpOnly": bool(c.get("httpOnly", False)),
+        }
+        same_site = str(c.get("sameSite") or "").capitalize()
+        if same_site in ("Strict", "Lax", "None"):
+            cdp_cookie["sameSite"] = same_site
+        if c.get("expiry"):
+            cdp_cookie["expires"] = c["expiry"]  # CDPは"expires"というキー名(秒単位はexpiryと同じ)
         try:
-            driver.get(f"https://{domain}/")
-            time.sleep(1)
+            driver.execute_cdp_cmd("Network.setCookie", cdp_cookie)
+            applied += 1
         except Exception as e:
-            print(f"  ⚠ {domain} を開けませんでした({e})。このドメインのCookie{len(domain_cookies)}件をスキップします。")
-            continue
-        for c in domain_cookies:
-            cookie = {k: v for k, v in c.items()
-                      if k in ("name", "value", "domain", "path", "expiry", "secure", "httpOnly")}
-            try:
-                driver.add_cookie(cookie)
-                applied += 1
-            except Exception:
-                continue
+            print(f"  ⚠ Cookie '{c.get('name')}' の適用に失敗しました: {type(e).__name__}: {e}")
 
     driver.get("https://note.com/")
     time.sleep(2)
-    print(f"  🍪 Cookie {applied}/{total}件を適用しました。")
+    print(f"  🍪 Cookie {applied}/{total}件を適用しました(CDP経由)。")
     return True
 
 
