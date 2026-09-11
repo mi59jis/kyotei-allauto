@@ -4,8 +4,8 @@ on:
   schedule:
     # cronはUTC。JST 8:00〜21:00をカバーするため2本に分けている
     # (23:00-23:59 UTC = 8:00-8:59 JST) と (0:00-11:59 UTC = 9:00-20:59 JST)
-    - cron: "*/10 23 * * *"
-    - cron: "*/10 0-11 * * *"
+    - cron: "*/5 23 * * *"
+    - cron: "*/5 0-11 * * *"
   workflow_dispatch: {}   # 手動実行用(スマホアプリの「Run workflow」からも実行可能)
 
 permissions:
