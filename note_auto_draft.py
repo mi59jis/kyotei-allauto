@@ -524,7 +524,12 @@ def _prepare_paid_settings(driver, price=300, log=None, publish=False):
             _log("  ⚠ 「公開に進む」ボタンが見つかりませんでした。価格設定をスキップします。")
             return False, False
         publish_btn.click()
-        time.sleep(2)
+
+        try:
+            WebDriverWait(driver, 15).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, "input[name='is_paid']")))
+        except Exception:
+            pass  # 見つからなければ、この後の検索でNoneになり通常通り処理される
 
         paid_radio = None
         for el in driver.find_elements(By.CSS_SELECTOR, "input[name='is_paid']"):
@@ -532,7 +537,8 @@ def _prepare_paid_settings(driver, price=300, log=None, publish=False):
                 paid_radio = el
                 break
         if paid_radio is None:
-            _log("  ⚠ 「有料」のラジオボタンが見つかりませんでした。価格設定をスキップします。")
+            _log("  ⚠ 「有料」のラジオボタンが見つかりませんでした。価格設定をスキップします。"
+                 f"(現在URL: {driver.current_url})")
             return False, False
         driver.execute_script("arguments[0].click();", paid_radio)
         time.sleep(1)
@@ -590,7 +596,11 @@ def _publish_free_article(driver, log=None):
             _log("  ⚠ 「公開に進む」ボタンが見つかりませんでした。公開をスキップします。")
             return False
         publish_btn.click()
-        time.sleep(2)
+        try:
+            WebDriverWait(driver, 15).until(
+                EC.presence_of_element_located((By.XPATH, "//button[text()='投稿する']")))
+        except Exception:
+            pass  # 見つからなければ、この後の_click_publish_and_verify側で改めて検索・処理される
 
         return _click_publish_and_verify(driver, log=log)
     except Exception as e:

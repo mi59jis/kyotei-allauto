@@ -40,13 +40,13 @@ jobs:
       - name: Run prediction cycle
         run: python auto_predict_cycle.py
 
-      - name: Upload log as artifact (for debugging, auto-deleted after 14 days)
-        if: always()
+      - name: Upload log as artifact (only on failure, for debugging)
+        if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: auto_cycle_log-${{ github.run_id }}
           path: auto_cycle_log.txt
-          retention-days: 14
+          retention-days: 3
           if-no-files-found: ignore
 
       - name: Commit updated results
