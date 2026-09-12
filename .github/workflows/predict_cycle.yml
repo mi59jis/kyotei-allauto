@@ -49,6 +49,17 @@ jobs:
           retention-days: 3
           if-no-files-found: ignore
 
+      - name: Upload note debug HTML if present
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: note-debug-${{ github.run_id }}
+          path: |
+            note_draft_fail_debug.html
+            note_publish_fail_debug.html
+          retention-days: 3
+          if-no-files-found: ignore
+
       - name: Commit updated results
         run: |
           git config user.name "kyotei-auto-bot"

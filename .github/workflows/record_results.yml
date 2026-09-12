@@ -1,15 +1,22 @@
-name: record-results
+name: predict-cycle
 
 on:
   schedule:
-    - cron: "0 18 * * *"   # 18:00 UTC = 3:00 JST(その日のレースが全て終わった後)
-  workflow_dispatch: {}
+    # cronはUTC。JST 8:00〜21:00をカバーするため2本に分けている
+    # (23:00-23:59 UTC = 8:00-8:59 JST) と (0:00-11:59 UTC = 9:00-20:59 JST)
+    - cron: "*/5 23 * * *"
+    - cron: "*/5 0-11 * * *"
+  workflow_dispatch: {}   # 手動実行用(スマホアプリの「Run workflow」からも実行可能)
 
 permissions:
-  contents: write
+  contents: write   # 予想結果ファイルをリポジトリにコミットし直すため
+
+concurrency:
+  group: predict-cycle
+  cancel-in-progress: false   # 前回の実行が終わっていなければ待つ(同時実行によるファイル競合を防ぐ)
 
 jobs:
-  record:
+  run-cycle:
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -25,22 +32,48 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Record yesterday's results
-        run: python pipeline.py record
-
-      - name: Commit updated results
-        run: |
-          git config user.name "kyotei-auto-bot"
-          git config user.email "actions@users.noreply.github.com"
-          git add prediction_record.csv || true
-          git diff --cached --quiet || git commit -m "auto: record results $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
-          git pull --rebase
-          git push
-
       - name: Restore note.com cookies
         env:
           NOTE_COOKIES_JSON: ${{ secrets.NOTE_COOKIES_JSON }}
         run: printf '%s' "$NOTE_COOKIES_JSON" > note_cookies.json
 
-      - name: Post daily results article to note
-        run: python post_daily_results.py
+      - name: Run prediction cycle
+        run: python auto_predict_cycle.py
+
+      - name: Upload log as artifact (only on failure, for debugging)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: auto_cycle_log-${{ github.run_id }}
+          path: auto_cycle_log.txt
+          retention-days: 3
+          if-no-files-found: ignore
+
+      - name: Upload note debug HTML if present
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: note-debug-${{ github.run_id }}
+          path: |
+            note_draft_fail_debug.html
+            note_publish_fail_debug.html
+          retention-days: 3
+          if-no-files-found: ignore
+
+      - name: Commit updated results
+        run: |
+          git config user.name "kyotei-auto-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add prediction_record.csv race_progress.json || true
+          git diff --cached --quiet || git commit -m "auto: predict cycle $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          for i in 1 2 3 4 5; do
+            if git pull --rebase && git push; then
+              echo "push succeeded (attempt $i)"
+              exit 0
+            fi
+            echo "push failed (attempt $i), retrying..."
+            git rebase --abort || true
+            sleep $((RANDOM % 10 + 5))
+          done
+          echo "::warning::5回リトライしてもpushできませんでした。このサイクル分の結果は未保存です。"
+          exit 1
