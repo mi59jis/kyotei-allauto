@@ -452,7 +452,14 @@ def _click_publish_and_verify(driver, log=None):
             submit_btn = el
             break
     if submit_btn is None:
-        _log("  ⚠ 「投稿する」ボタンが見つかりませんでした。公開は行わず下書きのままにします。")
+        debug_path = os.path.abspath("note_publish_fail_debug.html")
+        try:
+            with open(debug_path, "w", encoding="utf-8") as f:
+                f.write(driver.page_source)
+        except Exception:
+            debug_path = "(保存も失敗)"
+        _log(f"  ⚠ 「投稿する」ボタンが見つかりませんでした。公開は行わず下書きのままにします。"
+             f"(現在URL: {driver.current_url} / ページソース保存先: {debug_path})")
         return False
 
     url_before = driver.current_url
