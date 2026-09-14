@@ -143,14 +143,24 @@ def _load_cookies(driver, cookies_path):
             "secure": bool(c.get("secure", False)),
             "httpOnly": bool(c.get("httpOnly", False)),
         }
+        domain_for_url = (c.get("domain") or "").lstrip(".")
+        if domain_for_url:
+            cdp_cookie["url"] = f"https://{domain_for_url}{c.get('path', '/')}"
         same_site = str(c.get("sameSite") or "").capitalize()
         if same_site in ("Strict", "Lax", "None"):
             cdp_cookie["sameSite"] = same_site
         if c.get("expiry"):
             cdp_cookie["expires"] = c["expiry"]  # CDPは"expires"というキー名(秒単位はexpiryと同じ)
         try:
-            driver.execute_cdp_cmd("Network.setCookie", cdp_cookie)
-            applied += 1
+            # 【2026-09-14修正】Network.setCookieは失敗しても例外を投げず、戻り値の
+            # {"success": false} で伝える仕様だった。これまでは戻り値を見ておらず、
+            # 例外が出なかっただけで「適用成功」と誤カウントしていた
+            # (実際にはログイン用の重要なCookieがサイレントに失敗していた可能性がある)。
+            result = driver.execute_cdp_cmd("Network.setCookie", cdp_cookie)
+            if result and result.get("success"):
+                applied += 1
+            else:
+                print(f"  ⚠ Cookie '{c.get('name')}' の適用に失敗しました(CDPがsuccess=falseを返しました): {result}")
         except Exception as e:
             print(f"  ⚠ Cookie '{c.get('name')}' の適用に失敗しました: {type(e).__name__}: {e}")
 
