@@ -8,6 +8,12 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: predict-cycle   # 【2026-09-14追加】predict_cycle.ymlと同じグループにすることで、
+                          # 2つのワークフローが同時にnote.comの同じセッションを使わないようにする
+                          # (同時利用がセッション切断の原因になっていた可能性があるため)
+  cancel-in-progress: false
+
 jobs:
   record:
     runs-on: ubuntu-latest
@@ -34,8 +40,17 @@ jobs:
           git config user.email "actions@users.noreply.github.com"
           git add prediction_record.csv || true
           git diff --cached --quiet || git commit -m "auto: record results $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
-          git pull --rebase
-          git push
+          for i in 1 2 3 4 5; do
+            if git pull --rebase && git push; then
+              echo "push succeeded (attempt $i)"
+              exit 0
+            fi
+            echo "push failed (attempt $i), retrying..."
+            git rebase --abort || true
+            sleep $((RANDOM % 10 + 5))
+          done
+          echo "::warning::5回リトライしてもpushできませんでした。このサイクル分の結果は未保存です。"
+          exit 1
 
       - name: Restore note.com cookies
         env:
