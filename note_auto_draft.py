@@ -171,9 +171,19 @@ def _load_cookies(driver, cookies_path):
 
 
 def cmd_setup():
-    """初回ログイン用。ブラウザを開いたまま、手動でログインしてもらう。"""
+    """
+    初回ログイン用。ブラウザを開いたまま、手動でログインしてもらう。
+
+    【2026-09-15修正】以前は make_driver() を使っていたため、ローカルに
+    note_cookies.json が存在すると、そちらが優先されてCookieログインを
+    試みてしまい、setup中に手動でログインしても永続プロフィールには
+    何も保存されない(ブラウザを閉じたらセッションごと消える)という不具合が
+    あった。setupの目的はまさに永続プロフィールにログイン状態を保存することなので、
+    note_cookies.jsonの有無に関わらず必ず永続プロフィールを使う
+    _make_profile_driver() を使うようにした。
+    """
     print(f"プロフィール保存先: {PROFILE_DIR}")
-    driver = make_driver(headless=False)
+    driver = _make_profile_driver(headless=False)
     driver.get(LOGIN_URL)
     print("\nブラウザでnoteにログインしてください。")
     print("ログインが完了したら、このコンソールに戻って Enter キーを押してください。")
