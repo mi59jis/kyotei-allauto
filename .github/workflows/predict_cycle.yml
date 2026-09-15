@@ -57,6 +57,7 @@ jobs:
           path: |
             note_draft_fail_debug.html
             note_publish_fail_debug.html
+            note_paywall_settings_debug.html
           retention-days: 3
           if-no-files-found: ignore
 

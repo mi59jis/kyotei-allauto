@@ -461,6 +461,44 @@ def _click_publish_and_verify(driver, log=None):
         if el.text.strip() == "投稿する":
             submit_btn = el
             break
+
+    if submit_btn is None:
+        # 【2026-09-15追加】有料記事の場合、「投稿する」の代わりに「有料エリア設定」タブが
+        # 表示されていることがある(有料エリアの最終確認をこのタブ内で済ませないと
+        # 「投稿する」が現れない仕様と見られる)。見つかればクリックし、中の状態を保存した上で
+        # 何らかの保存・確認ボタンがあれば押し、もう一度「投稿する」を探し直す。
+        paywall_settings_btn = None
+        for el in driver.find_elements(By.TAG_NAME, "button"):
+            if el.text.strip() == "有料エリア設定":
+                paywall_settings_btn = el
+                break
+        if paywall_settings_btn is not None:
+            _log("  ℹ 「投稿する」の代わりに「有料エリア設定」タブが見つかりました。開いて確認します。")
+            paywall_settings_btn.click()
+            time.sleep(2)
+            debug_path2 = os.path.abspath("note_paywall_settings_debug.html")
+            try:
+                with open(debug_path2, "w", encoding="utf-8") as f:
+                    f.write(driver.page_source)
+                _log(f"  ℹ 「有料エリア設定」タブの中身を保存しました: {debug_path2}")
+            except Exception:
+                pass
+
+            # タブ内にありそうな保存・確認ボタンを幅広く探してクリックしてみる
+            for el in driver.find_elements(By.TAG_NAME, "button"):
+                t = el.text.strip()
+                if t in ("設定する", "設定を保存", "保存", "保存する", "次へ", "確認", "完了"):
+                    _log(f"  ➡ 「有料エリア設定」タブ内の「{t}」を押しました。")
+                    el.click()
+                    time.sleep(2)
+                    break
+
+            # 改めて「投稿する」を探す
+            for el in driver.find_elements(By.TAG_NAME, "button"):
+                if el.text.strip() == "投稿する":
+                    submit_btn = el
+                    break
+
     if submit_btn is None:
         debug_path = os.path.abspath("note_publish_fail_debug.html")
         try:
