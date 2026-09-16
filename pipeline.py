@@ -26,7 +26,22 @@ import urllib.request
 import json, csv, sys, os, pickle, itertools, glob, time
 import numpy as np
 from datetime import date, timedelta, datetime
+from zoneinfo import ZoneInfo
 from collections import defaultdict
+
+JST = ZoneInfo("Asia/Tokyo")
+
+
+def _today_jst():
+    """
+    【2026-09-16追加】date.today()はサーバーのシステム時刻をそのまま使うため、
+    GitHub Actions(UTC)で実行すると日本時間の「今日」と1日ズレることがあった。
+    record_results()のデフォルト日付(「昨日」)がこのズレの影響で実際には
+    存在しないレース日を指してしまい、結果が1件も見つからず「結果未反映」の
+    まま回収率0%と表示される不具合の原因になっていた。
+    日付が絡む場所は必ずこちらを使い、日本時間基準で統一する。
+    """
+    return datetime.now(JST).date()
 
 sys.path.insert(0, ".")
 from fan_features import load_fan_data, get_fan_features_single
@@ -466,7 +481,7 @@ def predict_race(sno, rno, prog, prev, model, feats, date_str=None):
     upset_label, _ = judge_upset(c1_cls, c1_exr, wind, wave)
 
     if not date_str:
-        date_str = str(date.today())
+        date_str = str(_today_jst())
 
     fan_df = get_fan_df()
 
@@ -640,7 +655,7 @@ def record_results(target_date=None):
         print("予想記録ファイルがありません。先に predict を実行してください。")
         return
 
-    tdate = target_date or (date.today()-timedelta(days=1)).strftime("%Y%m%d")
+    tdate = target_date or (_today_jst()-timedelta(days=1)).strftime("%Y%m%d")
     print(f"結果取得中: {tdate}...")
     try:
         data = fetch_results(tdate)
@@ -1098,7 +1113,7 @@ def main():
             macour_ok = False
             try:
                 import macour_scraper
-                today_compact = date.today().strftime("%Y%m%d")
+                today_compact = _today_jst().strftime("%Y%m%d")
                 print("  🌐 macour.jpから直前情報の取得を試みます...")
                 driver = macour_scraper.make_driver(headless=True)
                 try:
