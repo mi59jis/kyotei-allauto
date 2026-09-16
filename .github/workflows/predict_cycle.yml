@@ -38,6 +38,8 @@ jobs:
         run: printf '%s' "$NOTE_COOKIES_JSON" > note_cookies.json
 
       - name: Run prediction cycle
+        env:
+          NOTE_BROWSER: edge
         run: python auto_predict_cycle.py
 
       - name: Upload log as artifact (only on failure, for debugging)

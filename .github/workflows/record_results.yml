@@ -58,6 +58,8 @@ jobs:
         run: printf '%s' "$NOTE_COOKIES_JSON" > note_cookies.json
 
       - name: Post daily results article to note
+        env:
+          NOTE_BROWSER: edge
         run: python post_daily_results.py
 
       - name: Upload note debug HTML on failure

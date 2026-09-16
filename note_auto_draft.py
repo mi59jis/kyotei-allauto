@@ -29,11 +29,17 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.edge.service import Service as EdgeService
 
 PROFILE_DIR = os.path.abspath("./chrome_profile_note")
 NEW_NOTE_URL = "https://note.com/notes/new"
 LOGIN_URL = "https://note.com/login"
 COOKIES_FILE = os.environ.get("NOTE_COOKIES_PATH", "note_cookies.json")
+# 【2026-09-15追加】GitHub Actions側でのログイン不安定さがChrome固有のbot検知による
+# ものかを切り分けるため、ブラウザをEdgeに切り替えて試せるようにする。
+# ローカルでは何も設定しなければ今まで通りChromeが使われる(挙動を変えない)。
+# GitHub Actions側だけ試すには、ワークフローで環境変数 NOTE_BROWSER=edge を設定する。
+BROWSER = os.environ.get("NOTE_BROWSER", "chrome").lower()
 
 
 def _clean_stale_profile_locks():
@@ -60,10 +66,17 @@ def make_driver(headless=False):
     - note_cookies.json (または環境変数 NOTE_COOKIES_PATH で指定したファイル)が存在すれば、
       それを使ってCookieログインする(GitHub Actionsなど、永続プロフィールを持てない環境向け)
     - 無ければ、従来通りローカルの永続プロフィール(chrome_profile_note)を使う
+
+    ブラウザは環境変数 NOTE_BROWSER で切り替えられる("chrome"または"edge"、デフォルトchrome)。
     """
     use_cookies = os.path.exists(COOKIES_FILE)
+    use_edge = BROWSER == "edge"
 
-    options = webdriver.ChromeOptions()
+    if use_edge:
+        options = webdriver.EdgeOptions()
+    else:
+        options = webdriver.ChromeOptions()
+
     if not use_cookies:
         _clean_stale_profile_locks()
         options.add_argument(f"--user-data-dir={PROFILE_DIR}")
@@ -73,11 +86,17 @@ def make_driver(headless=False):
         # 【2026-09-03追加】headlessだとnote.comの/newページが毎回スケルトン表示のまま
         # 進まないという事象を確認。headless ChromeのデフォルトUAには"HeadlessChrome"
         # という文字列が含まれ、サイト側で検知されて挙動が変わる(読み込みが止まる)
-        # 可能性があるため、通常のChromeと同じUAを明示的に指定する。
-        options.add_argument(
-            "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-            "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
-        )
+        # 可能性があるため、通常のブラウザと同じUAを明示的に指定する。
+        if use_edge:
+            options.add_argument(
+                "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36 Edg/128.0.0.0"
+            )
+        else:
+            options.add_argument(
+                "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+            )
     options.add_argument("--window-size=1280,1000")
     # Windows環境でのクラッシュ対策
     options.add_argument("--no-sandbox")
@@ -89,12 +108,16 @@ def make_driver(headless=False):
     # (指定しないとランナーに元から入っているシステムChromeが使われ、setup-chromeアクションで
     #  インストールしたChromeDriverとバージョンが食い違うことがあるため)
     # ローカルのWindows環境ではこれらの環境変数は設定していないので、従来通りの自動検出で動く。
+    # Edge選択時は、GitHub Actionsランナーに標準搭載のmsedge/msedgedriverが
+    # Selenium Managerによって自動的に見つかるため、パス指定は通常不要。
     chrome_path = os.environ.get("CHROME_PATH")
     chromedriver_path = os.environ.get("CHROMEDRIVER_PATH")
-    if chrome_path:
+    if chrome_path and not use_edge:
         options.binary_location = chrome_path
 
-    if chromedriver_path:
+    if use_edge:
+        driver = webdriver.Edge(options=options)
+    elif chromedriver_path:
         service = Service(executable_path=chromedriver_path)
         driver = webdriver.Chrome(options=options, service=service)
     else:
