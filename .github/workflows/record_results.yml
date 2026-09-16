@@ -13,6 +13,7 @@ concurrency:
                           # 2つのワークフローが同時にnote.comの同じセッションを使わないようにする
                           # (同時利用がセッション切断の原因になっていた可能性があるため)
   cancel-in-progress: false
+  queue: max
 
 jobs:
   record:
