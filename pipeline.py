@@ -74,6 +74,13 @@ MODEL_FILE  = "model_new.pkl"
 FEAT_FILE   = "features_new.json"
 EDGE_THRESHOLD = 0.01   # 毎日運用向け。厳選したい場合は0.02に上げる
 
+# ---- シャドー運用(2026-09追加) ------------------------------------------------
+# リークなし再学習モデル(model_leakfree.pkl)を、公開する買い目には一切影響させず
+# 裏で同じレースに適用し、その買い目と確率・単勝オッズを記録する。
+# 数週間ぶんたまったら shadow_report.py で、現行モデルと同じレースで回収率を比較する。
+SHADOW_MODEL_FILE = "model_leakfree.pkl"
+SHADOW_MIN_EDGE = 0.03   # このedge以上の買い目を記録(各買い目のedgeも残すので、後から閾値を上げて評価できる)
+
 # オッズ未確定時のリトライ設定(レースがまだ先すぎてオッズが出ていないケース対策)
 ODDS_RETRY_MAX  = 4      # 最大リトライ回数(初回含めず)
 ODDS_RETRY_WAIT = 45     # リトライ間隔(秒)
@@ -184,6 +191,21 @@ def load_model():
         return model, feats
     print(f"⚠ {MODEL_FILE} が見つかりません。ルールベースで予想します。")
     return None, None
+
+
+_shadow_cache = {}
+def load_shadow_model():
+    """model_leakfree.pkl があれば読み込む。無い/壊れていれば None(シャドー運用を静かにスキップ)"""
+    if "art" not in _shadow_cache:
+        art = None
+        if os.path.exists(SHADOW_MODEL_FILE):
+            try:
+                with open(SHADOW_MODEL_FILE, "rb") as f:
+                    art = pickle.load(f)
+            except Exception as e:
+                print(f"  ⚠ {SHADOW_MODEL_FILE} の読み込みに失敗(シャドー運用スキップ): {e}")
+        _shadow_cache["art"] = art
+    return _shadow_cache["art"]
 
 # ============================================================
 # データ取得
@@ -563,7 +585,41 @@ def predict_race(sno, rno, prog, prev, model, feats, date_str=None):
 
     n_picks = len(picks)
 
+    # ---- シャドー: リークなしモデルの買い目を記録(公開する買い目には影響しない) ----
+    shadow = None
+    try:
+        art = load_shadow_model()
+        if art is not None and prev_ready and len(tansho) == 6 and prev:
+            import features_shared as _fs
+            _df = _fs.race_frame(prog, prev)
+            if len(_df) == 6:
+                _p = _fs.predict_win_probs(art, _df)
+                _pm = {int(b): float(v) for b, v in zip(_df["boat_no"], _p)}
+                _tot = sum(_pm.values())
+                _pm = {b: v / _tot for b, v in _pm.items()}
+                _imp = {b: 1.0 / o for b, o in tansho.items() if o > 0}
+                _ti = sum(_imp.values())
+                _mk = {b: v / _ti for b, v in _imp.items()}
+                _sp = []
+                for i, j, k in itertools.permutations(list(_pm.keys()), 3):
+                    if i not in _mk or j not in _mk or k not in _mk:
+                        continue
+                    e = harville(_pm, i, j, k) - harville(_mk, i, j, k)
+                    if e >= SHADOW_MIN_EDGE:
+                        _sp.append((f"{i}-{j}-{k}", e))
+                _sp.sort(key=lambda x: -x[1])
+                shadow = {"version": art.get("version", "?"), "picks": _sp,
+                          "p_win": [round(_pm.get(b, 0.0), 4) for b in range(1, 7)]}
+    except Exception as e:
+        print(f"  ⚠ シャドー予想でエラー(公開予想には影響なし): {e}")
+
+    pick_detail = " / ".join(
+        f"{i}-{j}-{k}:{edge:.4f}" for i, j, k, m_prob, mkt_prob, edge in edge_info)
+    tansho_str = "|".join(f"{b}:{o}" for b, o in sorted(tansho.items())) if len(tansho) == 6 else ""
+
     return {
+        "model_version": "model_new(old)", "pick_detail": pick_detail, "tansho": tansho_str,
+        "shadow": shadow,
         "date":date_str, "stadium":STADIUM_NAMES.get(sno,"不明"),
         "stadium_no":sno, "race_no":rno,
         "weather":weather, "wind":wind, "wave":wave,
@@ -605,7 +661,10 @@ def format_prediction(r):
 RECORD_FIELDS = [
     "date","stadium","race_no","upset","n_picks","picks","max_edge",
     "rank1","rank2","rank3","wind","wave",
-    "result","hit","payout","profit","note"
+    "result","hit","payout","profit","note",
+    # 2026-09追加: 検証用の記録
+    "model_version","tansho","pick_detail",
+    "shadow_version","shadow_picks","shadow_p_win"
 ]
 
 def save_prediction(r):
@@ -623,7 +682,15 @@ def save_prediction(r):
         "rank3":f"{ranked[2][0]}号{ranked[2][1]}" if len(ranked)>2 else "",
         "wind":r["wind"], "wave":r["wave"],
         "result":"","hit":"","payout":"","profit":"","note":"",
+        "model_version": r.get("model_version", ""),
+        "tansho": r.get("tansho", ""),
+        "pick_detail": r.get("pick_detail", ""),
     }
+    sh = r.get("shadow")
+    if sh:
+        new_row["shadow_version"] = sh["version"]
+        new_row["shadow_picks"] = " / ".join(f"{c}:{e:.4f}" for c, e in sh["picks"])
+        new_row["shadow_p_win"] = " ".join(str(x) for x in sh["p_win"])
 
     key = (str(r["date"]), str(r["stadium"]), str(r["race_no"]))
 
