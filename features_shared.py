@@ -23,7 +23,34 @@ FEATURES = [
     "nat1_dev", "motor2_dev", "c1_class", "c1_nat1", "nat1_x_c1",
 ]
 
+# 追加候補(2026-09-19): 直前情報の展示スタート・体重・気象。予想時点で分かる情報のみ。
+FEATURES_EXTRA = ["ex_st", "ex_st_dev", "ex_st_rk", "weight", "weight_dev", "temp", "wtemp"]
+
+# 期別成績(FAN)由来。使うレースより「前に集計が終わった期」のデータだけを使う(attach_fan)。
+FEATURES_FAN = ["fan_index_now", "fan_win_rate", "fan_place_rate", "fan_avg_st", "fan_starts",
+                "fan_rank_score", "fan_course_place_rate", "fan_course_avg_st",
+                "fan_course_avg_st_rank", "fan_course_entries"]
+
 RACE_KEY = ["date", "stadium", "race_no"]
+
+
+def parse_st(val):
+    """スタートタイミング → 数値。'F.02'(フライング)は負、'L.05'は正。変換できなければ None"""
+    if val is None:
+        return None
+    if isinstance(val, (int, float)):
+        return float(val)
+    s = str(val).strip()
+    if not s:
+        return None
+    try:
+        if s[0] in "Ff":
+            return -float(s[1:])
+        if s[0] in "Ll":
+            return float(s[1:])
+        return float(s)
+    except ValueError:
+        return None
 
 
 def _prev_boat_dict(prev):
@@ -61,6 +88,10 @@ def make_rows(prog, prev):
             "flying": p.get("racer_flying_count"),
             "ex_time": v.get("racer_exhibition_time"),
             "course": v.get("racer_course_number"),
+            "ex_st_raw": parse_st(v.get("racer_start_timing")),
+            "weight": v.get("racer_weight"),
+            "temp": prev.get("race_temperature") if prev else None,
+            "wtemp": prev.get("race_water_temperature") if prev else None,
             "tilt": v.get("racer_tilt_adjustment"),
             "wt_adj": v.get("racer_weight_adjustment"),
             "wind": prev.get("race_wind") if prev else None,
@@ -97,12 +128,67 @@ def add_race_features(df):
     c1.columns = RACE_KEY + ["c1_class", "c1_nat1"]
     df = df.merge(c1, on=RACE_KEY, how="left")
     df["nat1_x_c1"] = df["nat1"] * df["is_course1"]
+    # ---- 追加候補(展示ST・体重)。展示STは0以下/欠損を除いてレース内で比較する
+    df["ex_st"] = df["ex_st_raw"]
+    st_ok = df["ex_st"].where(df["ex_st"] > 0)
+    g = df.assign(_st=st_ok).groupby(RACE_KEY)
+    df["ex_st_rk"] = g["_st"].rank(method="min")
+    df["ex_st_dev"] = df["ex_st"] - g["_st"].transform("mean")
+    w = df["weight"].where(df["weight"] > 0)
+    df["weight"] = w
+    df["weight_dev"] = w - w.groupby([df[k] for k in RACE_KEY]).transform("mean")
     return df
 
 
-def race_frame(prog, prev):
-    """本番用: 1レース分の特徴量DataFrame(艇番順)"""
-    return add_race_features(rows_to_frame(make_rows(prog, prev)))
+def attach_fan(df, fan):
+    """期別成績(FAN)を付ける。fan は fan_features.load_fan_data() の返り値。
+    レース日より前に集計期間が終わった期(period_to < 日付)のうち最新のものだけを使う
+    (以前の attach_fan_features は period_from を使っていたため、そのレースを含む期の成績が
+     混ざる=リークの恐れがあった。ここでは集計終了の翌日から有効にする)。
+    fan が None/空なら、FAN列はすべて NaN。"""
+    cols = FEATURES_FAN
+    if fan is None or len(fan) == 0:
+        for c in cols:
+            df[c] = np.nan
+        return df
+    f = fan.dropna(subset=["racer_id", "period_to_dt"]).copy()
+    f["_eff"] = f["period_to_dt"] + pd.Timedelta(days=1)
+    f["racer_id"] = f["racer_id"].astype("float64")
+    f = f.sort_values("_eff")
+    left = df.copy()
+    left["_dt"] = pd.to_datetime(left["date"])
+    left["_rid"] = pd.to_numeric(left["racer_id"], errors="coerce").astype("float64")
+    left["_ord"] = np.arange(len(left))
+    left = left.sort_values("_dt")
+    keep = ["racer_id", "_eff", "index_now", "win_rate", "place_rate", "avg_st", "starts", "rank_score"] + \
+           [f"c{c}_{k}" for c in range(1, 7) for k in ("place_rate", "avg_st", "avg_st_rank", "entries")]
+    fr = f[keep].rename(columns={c: ("_frid" if c == "racer_id" else c if c == "_eff" else "fn_" + c) for c in keep})
+    m = pd.merge_asof(left, fr,
+                      left_on="_dt", right_on="_eff", left_by="_rid", right_by="_frid",
+                      direction="backward")
+    m = m.sort_values("_ord").reset_index(drop=True)
+    out = df.reset_index(drop=True).copy()
+    out["fan_index_now"] = m["fn_index_now"].values
+    out["fan_win_rate"] = m["fn_win_rate"].values
+    out["fan_place_rate"] = m["fn_place_rate"].values
+    out["fan_avg_st"] = m["fn_avg_st"].values
+    out["fan_starts"] = m["fn_starts"].values
+    out["fan_rank_score"] = m["fn_rank_score"].values
+    course = pd.to_numeric(out["course"], errors="coerce").values
+    for name, k in (("fan_course_place_rate", "place_rate"), ("fan_course_avg_st", "avg_st"),
+                    ("fan_course_avg_st_rank", "avg_st_rank"), ("fan_course_entries", "entries")):
+        arr = np.full(len(out), np.nan)
+        for c in range(1, 7):
+            mk = course == c
+            arr[mk] = pd.to_numeric(m.loc[mk, f"fn_c{c}_{k}"], errors="coerce").values
+        out[name] = arr
+    return out
+
+
+def race_frame(prog, prev, fan=None):
+    """本番用: 1レース分の特徴量DataFrame(艇番順)。fan を渡すとFAN特徴量も付く。"""
+    df = add_race_features(rows_to_frame(make_rows(prog, prev)))
+    return attach_fan(df, fan)
 
 
 def predict_win_probs(artifact, df):
