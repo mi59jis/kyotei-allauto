@@ -80,6 +80,8 @@ EDGE_THRESHOLD = 0.01   # 毎日運用向け。厳選したい場合は0.02に�
 # 数週間ぶんたまったら shadow_report.py で、現行モデルと同じレースで回収率を比較する。
 SHADOW_MODEL_FILE = "model_leakfree.pkl"
 SHADOW_MIN_EDGE = 0.03   # このedge以上の買い目を記録(各買い目のedgeも残すので、後から閾値を上げて評価できる)
+SHADOW_RATIO = 1.3       # 追加ルール: モデル確率/市場確率 がこの値以上
+SHADOW_MIN_Q = 0.05      # 追加ルール: かつ市場確率がこの値以上(人気薄を避ける)
 
 # オッズ未確定時のリトライ設定(レースがまだ先すぎてオッズが出ていないケース対策)
 ODDS_RETRY_MAX  = 4      # 最大リトライ回数(初回含めず)
@@ -604,17 +606,31 @@ def predict_race(sno, rno, prog, prev, model, feats, date_str=None):
                 for i, j, k in itertools.permutations(list(_pm.keys()), 3):
                     if i not in _mk or j not in _mk or k not in _mk:
                         continue
-                    e = harville(_pm, i, j, k) - harville(_mk, i, j, k)
-                    if e >= SHADOW_MIN_EDGE:
-                        _sp.append((f"{i}-{j}-{k}", e))
+                    _m = harville(_pm, i, j, k)
+                    _q = harville(_mk, i, j, k)
+                    e = _m - _q
+                    ratio = (_m / _q) if _q > 1e-9 else 0.0
+                    # 記録する買い目: edge>=SHADOW_MIN_EDGE、または「比>=1.3 かつ 市場確率>=5%」
+                    # (2026-09-19の券種別検証で見つけた条件。事後に選んだ条件なので、まず記録だけして実測で確かめる)
+                    if e >= SHADOW_MIN_EDGE or (ratio >= SHADOW_RATIO and _q >= SHADOW_MIN_Q):
+                        _sp.append((f"{i}-{j}-{k}", e, _m, _q))
                 _sp.sort(key=lambda x: -x[1])
+                # 絞り込み検証用のタグ(2026-09-19の切り口別検証で候補になった条件を、あとで実測で確かめるため)
+                #  grade=番組表のグレード番号 / a1=A1の人数 / c1cls=1号艇の級 / p1m=モデルの1号艇勝率 / p1k=市場(単勝)の1号艇勝率
+                try:
+                    _a1 = sum(1 for _v in _class_map.values() if _v == 1)
+                    _tags = (f"grade={prog.get('race_grade_number')}|a1={_a1}|c1cls={c1_cls}"
+                             f"|p1m={_pm.get(1, 0.0):.4f}|p1k={_mk.get(1, 0.0):.4f}")
+                except Exception:
+                    _tags = ""
                 shadow = {"version": art.get("version", "?"), "picks": _sp,
-                          "p_win": [round(_pm.get(b, 0.0), 4) for b in range(1, 7)]}
+                          "p_win": [round(_pm.get(b, 0.0), 4) for b in range(1, 7)],
+                          "tags": _tags}
     except Exception as e:
         print(f"  ⚠ シャドー予想でエラー(公開予想には影響なし): {e}")
 
     pick_detail = " / ".join(
-        f"{i}-{j}-{k}:{edge:.4f}" for i, j, k, m_prob, mkt_prob, edge in edge_info)
+        f"{i}-{j}-{k}:{edge:.4f}:{m_prob:.5f}:{mkt_prob:.5f}" for i, j, k, m_prob, mkt_prob, edge in edge_info)
     tansho_str = "|".join(f"{b}:{o}" for b, o in sorted(tansho.items())) if len(tansho) == 6 else ""
 
     return {
@@ -664,7 +680,7 @@ RECORD_FIELDS = [
     "result","hit","payout","profit","note",
     # 2026-09追加: 検証用の記録
     "model_version","tansho","pick_detail",
-    "shadow_version","shadow_picks","shadow_p_win"
+    "shadow_version","shadow_picks","shadow_p_win","shadow_tags"
 ]
 
 def save_prediction(r):
@@ -689,8 +705,9 @@ def save_prediction(r):
     sh = r.get("shadow")
     if sh:
         new_row["shadow_version"] = sh["version"]
-        new_row["shadow_picks"] = " / ".join(f"{c}:{e:.4f}" for c, e in sh["picks"])
+        new_row["shadow_picks"] = " / ".join(f"{c}:{e:.4f}:{m:.5f}:{q:.5f}" for c, e, m, q in sh["picks"])
         new_row["shadow_p_win"] = " ".join(str(x) for x in sh["p_win"])
+        new_row["shadow_tags"] = sh.get("tags", "")
 
     key = (str(r["date"]), str(r["stadium"]), str(r["race_no"]))
 

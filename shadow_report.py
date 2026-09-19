@@ -65,6 +65,27 @@ def eval_rule(done, key, pred, rng):
     return int(cost / 100), pay / cost * 100, lo, hi
 
 
+def tags(r):
+    """'grade=5|a1=1|c1cls=2|p1m=0.5|p1k=0.6' → dict(数値化)"""
+    out = {}
+    for part in (r.get("shadow_tags") or "").split("|"):
+        if "=" in part:
+            k, v = part.split("=", 1)
+            try:
+                out[k] = float(v)
+            except ValueError:
+                out[k] = None
+    return out
+
+
+# 事前に決めた絞り込み条件(2026-09-19の切り口別検証で候補になったもの。ここで実測して確かめる。増やさない)
+RACE_FILTERS = [
+    ("除外候補: グレード2 または A1が6人", lambda t: t.get("grade") == 2 or t.get("a1") == 6),
+    ("候補: A1が1〜2人", lambda t: t.get("a1") in (1.0, 2.0)),
+    ("候補: モデル>市場(1号艇 +3pt以上)", lambda t: t.get("p1m") is not None and t.get("p1k") is not None and t["p1m"] - t["p1k"] >= 0.03),
+]
+
+
 def fmt(x):
     if x is None:
         return f"{'0':>8} {'-':>7} {'-':>15}"
@@ -107,10 +128,30 @@ def main():
     print(f"{'':>6} | {'現行: 点数':>8} {'ROI%':>7} {'95%CI':>15} | {'新: 点数':>8} {'ROI%':>7} {'95%CI':>15}")
     print(f"{'':>6} | {fmt(a)} | {fmt(b)}")
 
+    tagged = [r for r in done if r.get("shadow_tags")]
+    print(f"\n(3) 絞り込み条件(事前に決めた3つ)。対象は、タグ付きで結果確定したレース {len(tagged)}件")
+    if len(tagged) < 200:
+        print("  ※ タグ付きの記録がまだ少ないです(タグは2026-09-20以降の記録から付きます)。数百レース以上たまってから見てください。")
+    if tagged:
+        rule = lambda e, m, q: (m is not None and q is not None and q >= RULE_Q and q > 0 and m / q >= RULE_RATIO)
+        print(f"  買い方は(2)の追加ルール(新モデル)。ROI%と95%CI。")
+        print(f"  {'条件':<34} | {'該当: 点数':>8} {'ROI%':>7} {'95%CI':>15} | {'非該当: 点数':>10} {'ROI%':>7} {'95%CI':>15}")
+        base = eval_rule(tagged, "shadow_picks", rule, rng)
+        print(f"  {'(絞らない=全部)':<34} | {fmt(base)} |")
+        for name, fn in RACE_FILTERS:
+            yes = [r for r in tagged if fn(tags(r))]
+            no = [r for r in tagged if not fn(tags(r))]
+            a = eval_rule(yes, "shadow_picks", rule, rng) if yes else None
+            b = eval_rule(no, "shadow_picks", rule, rng) if no else None
+            print(f"  {name:<34} | {fmt(a)} | {fmt(b)}")
+        print("  ※ 市場の1号艇勝率は、ここでは単勝オッズから計算しています(過去の検証は3連単オッズから)。少しずれます。")
+
     print("\n読み方:")
     print(" ・同じレースで両モデルを比べています。基準線(全120点買い)は約60%。")
     print(" ・過去の検証(walk-forward)では、(2)のルールを新モデルに当てると 約85%(95%CI 79〜91%)でした。")
     print("   実測がそれに近ければ、検証が本番でも通用している目安です。")
+    print(" ・(3)は、過去のデータで良く見えた条件が、これから先も続くかの確認です。「除外候補」は該当側が悪く、")
+    print("   「候補」は該当側が良い、が続けば有効。差が出なければ、過去の良さは偶然だったと判断します。")
     print(" ・95%CIが100%をまたぐ間は黒字と言い切れません。公開する買い目は、十分たまるまで変えません。")
 
 
