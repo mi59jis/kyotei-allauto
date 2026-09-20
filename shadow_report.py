@@ -78,10 +78,14 @@ def tags(r):
     return out
 
 
-# 事前に決めた絞り込み条件(2026-09-19の切り口別検証で候補になったもの。ここで実測して確かめる。増やさない)
+# 事前に決めた絞り込み条件(切り口別検証とB級検証で候補になったもの。ここで実測して確かめる。増やさない)
+# (a12は9/20以降のタグから。それ以前の記録では、a12を使う条件は非該当になる)
 RACE_FILTERS = [
     ("除外候補: グレード2 または A1が6人", lambda t: t.get("grade") == 2 or t.get("a1") == 6),
     ("候補: A1が1〜2人", lambda t: t.get("a1") in (1.0, 2.0)),
+    ("B級検証: 1コースがB級(級3〜4)", lambda t: t.get("c1cls") is not None and t["c1cls"] >= 3),
+    ("B級検証: 1コースB級+他のA級が1人", lambda t: t.get("c1cls") is not None and t["c1cls"] >= 3 and t.get("a12") == 1),
+    ("B級検証: 6人全員がB級", lambda t: t.get("a12") == 0),
     ("候補: モデル>市場(1号艇 +3pt以上)", lambda t: t.get("p1m") is not None and t.get("p1k") is not None and t["p1m"] - t["p1k"] >= 0.03),
 ]
 
@@ -129,7 +133,7 @@ def main():
     print(f"{'':>6} | {fmt(a)} | {fmt(b)}")
 
     tagged = [r for r in done if r.get("shadow_tags")]
-    print(f"\n(3) 絞り込み条件(事前に決めた3つ)。対象は、タグ付きで結果確定したレース {len(tagged)}件")
+    print(f"\n(3) 絞り込み条件(事前に決めた条件)。対象は、タグ付きで結果確定したレース {len(tagged)}件")
     if len(tagged) < 200:
         print("  ※ タグ付きの記録がまだ少ないです(タグは2026-09-20以降の記録から付きます)。数百レース以上たまってから見てください。")
     if tagged:

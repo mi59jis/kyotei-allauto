@@ -616,10 +616,11 @@ def predict_race(sno, rno, prog, prev, model, feats, date_str=None):
                         _sp.append((f"{i}-{j}-{k}", e, _m, _q))
                 _sp.sort(key=lambda x: -x[1])
                 # 絞り込み検証用のタグ(2026-09-19の切り口別検証で候補になった条件を、あとで実測で確かめるため)
-                #  grade=番組表のグレード番号 / a1=A1の人数 / c1cls=1号艇の級 / p1m=モデルの1号艇勝率 / p1k=市場(単勝)の1号艇勝率
+                #  grade=番組表のグレード番号 / a1=A1の人数 / a12=A1+A2の人数 / c1cls=1号艇の級 / p1m=モデルの1号艇勝率 / p1k=市場(単勝)の1号艇勝率
                 try:
                     _a1 = sum(1 for _v in _class_map.values() if _v == 1)
-                    _tags = (f"grade={prog.get('race_grade_number')}|a1={_a1}|c1cls={c1_cls}"
+                    _a12 = sum(1 for _v in _class_map.values() if _v in (1, 2))
+                    _tags = (f"grade={prog.get('race_grade_number')}|a1={_a1}|a12={_a12}|c1cls={c1_cls}"
                              f"|p1m={_pm.get(1, 0.0):.4f}|p1k={_mk.get(1, 0.0):.4f}")
                 except Exception:
                     _tags = ""
